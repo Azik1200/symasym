@@ -23,7 +23,35 @@ typedef struct {
 } BMPHeader;
 #pragma pack(pop)
 
-void generateImage(int size, int thickness, int symmetry, int direction, const char *filename) {
+void fillImage(unsigned char *imageData, int width, int height, int stride, int bytesPerPixel, int startY, int thickness) {
+    // Окрашивание пикселей в черный цвет
+    for (int i = 0; i < thickness; i++) {
+        for (int j = 0; j < width; j++) {
+            int pixelIndex = startY * stride + j * bytesPerPixel;
+            imageData[pixelIndex] = 0;        // Красный канал
+            imageData[pixelIndex + 1] = 0;    // Зеленый канал
+            imageData[pixelIndex + 2] = 0;    // Синий канал
+        }
+        startY++;
+    }
+}
+
+void mirrorImage(unsigned char *imageData, int width, int height, int stride, int bytesPerPixel) {
+    // Зеркальное отображение первой половины изображения
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width / 2; col++) {
+            int sourceIndex = row * stride + col * bytesPerPixel;
+            int targetIndex = row * stride + (width - col - 1) * bytesPerPixel;
+
+            // Копирование пикселя
+            imageData[targetIndex] = imageData[sourceIndex];                 // Красный канал
+            imageData[targetIndex + 1] = imageData[sourceIndex + 1];         // Зеленый канал
+            imageData[targetIndex + 2] = imageData[sourceIndex + 2];         // Синий канал
+        }
+    }
+}
+
+void generateImage(int size, int thickness, int symmetry, int direction, const char *filename, int pointCount, int *points) {
     int width = size;
     int height = size;
     int bytesPerPixel = 3; // 24 бита (8 бит на каждый из каналов RGB)
@@ -40,58 +68,51 @@ void generateImage(int size, int thickness, int symmetry, int direction, const c
     // Заполнение изображения белым цветом
     memset(imageData, 255, dataSize);
 
-    // Начальные координаты и шаг для линии
-    int startX, startY, stepX, stepY;
+    // Рисование ломаной линии
+    for (int i = 0; i < pointCount - 1; i++) {
+        int startX = points[i * 2];
+        int startY = points[i * 2 + 1];
+        int endX = points[(i + 1) * 2];
+        int endY = points[(i + 1) * 2 + 1];
 
-    if (direction == 0) {  // Вертикальная линия
-        startX = size / 2;
-        startY = thickness / 2;
-        stepX = 0;
-        stepY = 1;
-    } else {  // Горизонтальная линия
-        startX = thickness / 2;
-        startY = size / 2;
-        stepX = 1;
-        stepY = 0;
-    }
+        int dx = abs(endX - startX);
+        int dy = abs(endY - startY);
+        int sx = startX < endX ? 1 : -1;
+        int sy = startY < endY ? 1 : -1;
+        int err = dx - dy;
 
-    // Генерация линии
-    int x = startX;
-    int y = startY;
+        while (1) {
+            // Проверка границ изображения
+            if (startX < 0 || startX >= width || startY < 0 || startY >= height) {
+                break;
+            }
 
-    for (int i = 0; i < thickness; i++) {
-        // Проверка границ изображения
-        if (x < 0 || x >= width || y < 0 || y >= height) {
-            break;
-        }
-
-        // Окрашивание пикселей в черный цвет
-        for (int j = 0; j < width; j++) {
-            int pixelIndex = y * stride + j * bytesPerPixel;
+            // Окрашивание пикселя в черный цвет
+            int pixelIndex = startY * stride + startX * bytesPerPixel;
             imageData[pixelIndex] = 0;        // Красный канал
             imageData[pixelIndex + 1] = 0;    // Зеленый канал
             imageData[pixelIndex + 2] = 0;    // Синий канал
-        }
 
-        // Обновление координат
-        x += stepX;
-        y += stepY;
+            // Завершение, если достигнут конечный пиксель
+            if (startX == endX && startY == endY) {
+                break;
+            }
+
+            int err2 = 2 * err;
+            if (err2 > -dy) {
+                err -= dy;
+                startX += sx;
+            }
+            if (err2 < dx) {
+                err += dx;
+                startY += sy;
+            }
+        }
     }
 
     // Симметрия
     if (symmetry == 1) {
-        // Зеркальное отображение первой половины изображения
-        for (int row = 0; row < height; row++) {
-            for (int col = 0; col < width / 2; col++) {
-                int sourceIndex = row * stride + col * bytesPerPixel;
-                int targetIndex = row * stride + (width - col - 1) * bytesPerPixel;
-
-                // Копирование пикселя
-                imageData[targetIndex] = imageData[sourceIndex];                 // Красный канал
-                imageData[targetIndex + 1] = imageData[sourceIndex + 1];         // Зеленый канал
-                imageData[targetIndex + 2] = imageData[sourceIndex + 2];         // Синий канал
-            }
-        }
+        mirrorImage(imageData, width, height, stride, bytesPerPixel);
     }
 
     // Создание заголовка BMP
@@ -110,7 +131,7 @@ void generateImage(int size, int thickness, int symmetry, int direction, const c
     header.hResolution = 2835;  // 72 dpi
     header.vResolution = 2835;  // 72 dpi
 
-// Запись изображения в файл
+    // Запись изображения в файл
     FILE *file = fopen(filename, "wb");
     if (file == NULL) {
         printf("Failed to open the file for writing.\n");
@@ -118,16 +139,16 @@ void generateImage(int size, int thickness, int symmetry, int direction, const c
         return;
     }
 
-// Запись заголовка
+    // Запись заголовка
     fwrite(&header, sizeof(BMPHeader), 1, file);
 
-// Запись данных изображения
+    // Запись данных изображения
     fwrite(imageData, dataSize, 1, file);
 
-// Закрытие файла
+    // Закрытие файла
     fclose(file);
 
-// Освобождение памяти
+    // Освобождение памяти
     free(imageData);
 }
 
@@ -138,6 +159,8 @@ int main(int argc, char *argv[]) {
     int symmetry = 1;
     int direction = 0;
     const char *filename = "output.bmp";
+    int pointCount = 5;
+    int points[] = { 10, 10, 20, 5, 25, 20, 15, 25, 5, 15 };
 
     // Обработка аргументов командной строки
     for (int i = 1; i < argc; i++) {
@@ -165,7 +188,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Генерация изображения
-    generateImage(size, thickness, symmetry, direction, filename);
+    generateImage(size, thickness, symmetry, direction, filename , pointCount, points);
 
     return 0;
 }
